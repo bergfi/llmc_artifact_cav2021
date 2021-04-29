@@ -1,0 +1,64 @@
+#!/bin/sh
+
+SCRIPT_DIR="$( cd "$( dirname "${BASH_SOURCE[0]}" )" &> /dev/null && pwd )"
+
+DIR_ROOT="${SCRIPT_DIR}"
+DIR_INSTALL="${DIR_ROOT}/install"
+DIR_TOOLS="${DIR_ROOT}/tools"
+DIR_LLMC="${DIR_TOOLS}/llmc"
+DIR_NIDHUGG="${DIR_TOOLS}/nidhugg"
+DIR_DIVINE="${DIR_TOOLS}/divine"
+
+mkdir -p "${DIR_TOOLS}"
+
+# Download LLMC
+echo -e "\e[1;34m:: \e[0;1mDownloading \e[22mLLMC\e[0m"
+cd "${DIR_TOOLS}"
+if [ ! -e "${DIR_LLMC}/.git" ]; then
+	git clone https://github.com/bergfi/llmc.git ${DIR_LLMC}
+fi
+
+# Download Nidhugg
+echo -e "\e[1;34m:: \e[0;1mDownloading \e[22mnidhugg\e[0m"
+cd "${DIR_TOOLS}"
+if [ ! -e "${DIR_NIDHUGG}/.git" ]; then
+	git clone https://github.com/nidhugg/nidhugg.git "${DIR_NIDHUGG}"
+fi
+cd "${DIR_NIDHUGG}"
+git checkout 45664bcc
+
+# Download Divine
+echo -e "\e[1;34m:: \e[0;1mDownloading \e[22mDIVINE\e[0m"
+cd "${DIR_TOOLS}"
+if [ ! -e divine/_darcs ]; then
+	darcs get --to-match 'hash 54941901617c6cdc588a39cbcfdaa4dce49fff32' http://divine.fi.muni.cz/current "${DIR_DIVINE}"
+fi
+
+# Compile LLMC
+echo -e "\e[1;34m:: \e[0;1mCompiling \e[22mLLMC\e[0m"
+cd "${DIR_LLMC}"
+mkdir -p build/Release
+cd build/Release
+if [ ! -e ${DIR_LLMC}/build/Release/Makefile ]; then
+	cmake ../.. -DCMAKE_BUILD_TYPE=Release -DCMAKE_INSTALL_PREFIX="${DIR_INSTALL}" -DUSE_SYSTEM_LLVM=1
+fi
+make -j 4
+
+# Compile Nidhugg
+echo -e "\e[1;34m:: \e[0;1mCompiling \e[22mnidhugg\e[0m"
+cd "${DIR_NIDHUGG}"
+autoreconf --install
+mkdir -p build
+cd build
+if [ ! -e ${DIR_NIDHUGG}/build/Makefile ]; then
+	../configure --prefix="${DIR_INSTALL}"
+fi
+make -j 4
+
+# divine comes pre-compiled because it takes 3 hours to compile
+exit
+
+# Compile Divine
+echo -e "\e[1;34m:: \e[0;1mCompiling \e[22mDIVINE\e[0m"
+cd "${DIR_DIVINE}"
+make -j 4

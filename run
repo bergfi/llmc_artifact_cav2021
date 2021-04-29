@@ -1,0 +1,386 @@
+#/bin/bash
+
+SCRIPT_DIR="$( cd "$( dirname "${BASH_SOURCE[0]}" )" &> /dev/null && pwd )"
+
+LOGNAME="log.txt"
+
+RESULTS_COLLECTION_DIR="${SCRIPT_DIR}/results"
+
+DRYRUN="0"
+
+DIR_ROOT="${SCRIPT_DIR}"
+DIR_INSTALL="${DIR_ROOT}/install"
+DIR_TOOLS="${DIR_ROOT}/tools"
+DIR_LLMC="${DIR_TOOLS}/llmc"
+DIR_NIDHUGG="${DIR_TOOLS}/nidhugg"
+DIR_DIVINE="${DIR_TOOLS}/divine"
+
+LLMC="${DIR_LLMC}/build/Release/llmc/llmc"
+DIVINE="${DIR_DIVINE}/_build.release/tools/divine"
+NIDHUGG="${DIR_NIDHUGG}/build/src/nidhugg"
+
+TEST_DIR="${DIR_LLMC}/tests/performance"
+
+MAX_ATTEMPT=1
+
+ALL_IMPLS=( llmc:dtree divine nidhugg )
+
+TESTS_ALL=( \
+sortedlinkedlist.2.8/ \
+sortedlinkedlist.3.6/ \
+sortedlinkedlist.3.9/ \
+sortedlinkedlist.4.8/ \
+prefixsum.2.80 \
+prefixsum.4.80 \
+prefixsum.6.60 \
+prefixsum.6.90 \
+linkedlist.2.8 \
+linkedlist.3.6 \
+linkedlist.3.9 \
+linkedlist.4.8 \
+msq.3.3p \
+msq.2.2p \
+msq.3.3 \
+msq.3.2p \
+hashmap.3.9 \
+hashmap.4.12 \
+hashmap.4.16 \
+hashmap.6.12 \
+philo.4.2 \
+philo.4.4 \
+philo.4.8 \
+philo.4.12 \
+)
+
+TESTS_QUICK=( \
+sortedlinkedlist.2.8/ \
+sortedlinkedlist.3.6/ \
+sortedlinkedlist.3.9/ \
+sortedlinkedlist.4.8/ \
+prefixsum.2.80 \
+prefixsum.4.80 \
+linkedlist.2.8 \
+linkedlist.3.6 \
+linkedlist.3.9 \
+hashmap.3.9 \
+hashmap.4.12 \
+philo.4.2 \
+philo.4.4 \
+msq.2.2p \
+msq.3.3 \
+)
+
+THREADS_ALL=( 96 8 4 48 16 192 )
+THREADS_QUICK=( 4 )
+
+PROFILE=QUICK
+
+THREADS_MANUAL=""
+TOOLS_MANUAL=""
+TESTS_MANUAL=""
+
+while getopts ":e:nm:p:s:t:" o; do
+    case "${o}" in
+		e)
+			TESTS_MANUAL="$OPTARG"
+			;;
+        n)
+			DRYRUN="1"
+            ;;
+        m)
+			MAX_ATTEMPT=$OPTARG
+            ;;
+		p)
+			PROFILE=$OPTARG
+			;;
+		s)
+			TOOLS_MANUAL="$OPTARG"
+			;;
+		t)
+			THREADS_MANUAL="$OPTARG"
+			;;
+    esac
+done
+shift $((OPTIND-1))
+
+eval ALL_THREADS=\( \${THREADS_${PROFILE}[@]} \)
+eval ALL_TESTS=\( \${TESTS_${PROFILE}[@]} \)
+
+if [[ "${THREADS_MANUAL}" != "" ]]; then
+	ALL_THREADS=( ${THREADS_MANUAL} )
+fi
+
+if [[ "${TOOLS_MANUAL}" != "" ]]; then
+	ALL_TOOLS=( ${TOOLS_MANUAL} )
+fi
+
+if [[ "${TESTS_MANUAL}" != "" ]]; then
+	ALL_TESTS=( ${TESTS_MANUAL} )
+fi
+
+function echolog() {
+	echo -n `date +"[%m-%d %H:%M:%S]"` | tee -a $LOG
+	echo $@ | tee -a $LOG
+}
+
+function testImpl() {
+	TESTDIR=$1;
+	IMPL=$2;
+	THREADS=$3;
+	SCALE=$4;
+	RMSCALE=$4;
+	STORAGE="";
+	TOOl="";
+
+	TEST="$(basename $TESTDIR)"
+
+	if [ ! -d "${TESTDIR}" ]; then
+		echolog -e "\e[31;1m::\e[0;1m Not a test directory: ${TESTDIR}\e[0m";
+	fi		
+
+	# Determine STORAGE and TOOL from IMPL
+	if [[ "${IMPL:0:5}" == "llmc:" ]]; then
+		STORAGE="${IMPL/llmc:/}";
+		TOOL="llmc"
+	else
+		TOOL="${IMPL}"
+		STORAGE="${IMPL}"
+	fi
+
+	LOG="${RESULTS_COLLECTION_DIR}/${LOGNAME}";
+
+	# Determine STRATegy from TOOL
+	case "$TOOL" in
+		llmc)
+			STRAT="unknown"
+		;;
+		divine)
+			STRAT="unknown"
+		;;
+		nidhugg)
+			STRAT="rf"
+		;;
+		*)
+			echolog -e "\e[31;1m::\e[0;1m Tool $TOOL not known\e[0m";
+			return;
+		;;
+	esac;
+
+	# Tool-specific settings
+	if [[ "$TOOL" == "nidhugg" ]]; then
+		if [[ "$TEST" =~ (hashmap|philo|msq).* ]]; then
+			echolog -e "\e[31;1m::\e[0;1m Inhibited to run $TOOL on $TEST: either it crashes after a long time or the test is not supported\e[0m";
+			return;
+		fi
+	fi
+	if [[ "$TOOL" == "divine" ]]; then
+		case "$TEST" in
+			hashmap.4.16|hashmap.6.12|msq.3.3p|msq.3.2p)
+				echolog -e "\e[31;1m::\e[0;1m Inhibited to run $TOOL on $TEST: either it crashes after a long time or the test is not supported\e[0m";
+				return;
+			;;
+			*)
+			;;
+		esac;
+	fi
+
+	if [[ "$TEST" == "prefixsum.6.90" ]]; then
+		SCALE=32
+		RMSCALE=32
+	elif [[ "$TEST" == "prefixsum.6.60" ]]; then
+		SCALE=30
+		RMSCALE=30
+	elif [[ "$TEST" == "hashmap.6.12" ]]; then
+		SCALE=32
+		RMSCALE=32
+	elif [[ "$TEST" == "hashmap.4.16" ]]; then
+		SCALE=32
+		RMSCALE=32
+	elif [[ "$TEST" == "msq.2.2p" ]]; then
+		SCALE=32
+		RMSCALE=34
+	elif [[ "$TEST" == "msq.2.2pb" ]]; then
+		SCALE=32
+		RMSCALE=38
+	elif [[ "$TEST" == "msq.3.2p" ]]; then
+		SCALE=32
+		RMSCALE=34
+	elif [[ "$TEST" == "msq.3.3p" ]]; then
+		SCALE=32
+		RMSCALE=34
+	elif [[ "$TEST" == "msq.1.2.3p" ]]; then
+		SCALE=32
+		RMSCALE=34
+	elif [[ "$TEST" == "philo.6.8" ]]; then
+		SCALE=32
+		RMSCALE=34
+	elif [[ "$TEST" == "philo.6.12" ]]; then
+		SCALE=32
+		RMSCALE=34
+	fi
+
+	# Check if test has already executed
+	ATTEMPT=0
+	while true; do
+		if [[ "$ATTEMPT" == "${MAX_ATTEMPT}" ]]; then
+			return;
+		fi
+		ATTEMPT=$((ATTEMPT+1));
+		RESULT_DIR="${RESULTS_COLLECTION_DIR}/${TEST}/${TOOL}/${STORAGE}_t${THREADS}_rm${RMSCALE}_dm${SCALE}_strat${STRAT}_r${ATTEMPT}";
+		[ ! -e ${RESULT_DIR} ] && break;
+
+		RUNFAILED=`test -e "${RESULT_DIR}/stderr" && cat "${RESULT_DIR}/stderr" | egrep -c "Command terminated by signal"`
+
+		if [[ "$RUNFAILED" != "0" ]]; then
+			#echolog -e "\e[36;1m  - \e[0;1mSkipping failed run (terminated by signal)\e[0m";
+			continue;
+		fi
+
+		case "$TOOL" in
+			llmc)
+				parseLLMCResult "${RESULT_DIR}/stdout"
+			;;
+			divine)
+				parseDivineResult "${RESULT_DIR}/test.report" "${RESULT_DIR}/stderr"
+			;;
+			nidhugg)
+				parseNidhuggResult "${RESULT_DIR}/stdout"
+			;;
+		esac;
+
+		if [[ "$PERFTEST" == "1" ]]; then
+			break;
+		fi
+
+
+	done;
+
+	echo "zomg ${TESTDIR}/test.cpp"
+	if [ -e "$TESTDIR/test.cpp" ]; then
+		FILETOMC="$TESTDIR/test.cpp"
+		ISCPP=1
+	else
+		FILETOMC="$TESTDIR/test.c"
+		ISCPP=0
+	fi
+
+	# Determine TESTEXEC according to TOOL
+	case "$TOOL" in
+		llmc)
+			clang "$FILETOMC" -S -emit-llvm -I ~/root/include -femit-all-decls -O3 -pthread -fno-rtti -fno-exceptions -fno-builtin -fno-vectorize -fno-slp-vectorize -o "$TESTDIR/test.ll"
+			TESTEXEC="$LLMC -m multicore_bitbetter -s $STORAGE --storage.hashmap_scale=${SCALE} --storage.hashmaproot_scale=${RMSCALE} --listener.writestate=0 --ll2dmc.assume_nonatomic_collapsable=1 --stats=1 --threads=${THREADS} ${TESTDIR}/test.ll"
+		;;
+		divine)
+			if [[ "$ISCPP" == "1" ]]; then
+				NEWFILETOMC=$FILETOMC
+			else
+				NEWFILETOMC="${FILETOMC/test.c/test.processed.c}"
+				gcc "$FILETOMC" -E -o "${NEWFILETOMC}"
+			fi
+			TESTEXEC="$DIVINE verify --threads $THREADS -o nofail:malloc --report-filename test.report $NEWFILETOMC"
+			[ -e "$TESTDIR/test.processed.report" ] && mv "$TESTDIR/test.processed.report" "$TESTDIR/test.report"
+		;;
+		nidhugg)
+			clang "$FILETOMC" -S -emit-llvm -I ~/root/include -femit-all-decls -O3 -pthread -fno-rtti -fno-exceptions -fno-builtin -fno-vectorize -fno-slp-vectorize -o "$TESTDIR/test.ll"
+			TESTEXEC="$NIDHUGG --sc --rf --n-threads=$THREADS $TESTDIR/test.ll"
+		;;
+	esac;
+
+	echolog -e "\e[34;1m::\e[0;1m Test $TEST, $IMPL, $ATTEMPT\e[0m (${RESULT_DIR})";
+
+	if [[ "$DRYRUN" != "0" ]]; then
+		echolog -e "\e[36;1m  - \e[0;1mDry run -- skipping\e[0m";
+		return;
+	fi
+
+	if [ ! -d "${RESULT_DIR}" ]; then
+		echolog -e "\e[36;1m  - \e[0;1mPreparing result directory\e[0m";
+		mkdir -p "${RESULT_DIR}";
+	fi
+
+	# Add timing
+	TESTEXEC="/usr/bin/time -v ${TESTEXEC}"
+
+	# Execute
+	echolog -e "\e[36;1m  - \e[0;1mRunning performance test ($TESTEXEC)\e[0m";
+	pushd "${RESULT_DIR}"
+	${TESTEXEC} > >(tee ${RESULT_DIR}/stdout) 2> >(tee ${RESULT_DIR}/stderr >&2)
+	popd
+
+}
+
+function parseLLMCResult() {
+	FILETOCHECK="$1";
+
+	PERFTEST=0
+
+	if [ ! -e "${FILETOCHECK}" ]; then
+		PERFTEST="1"
+		return;
+	fi
+
+	RUNOK=`test -e ${FILETOCHECK} && cat ${FILETOCHECK} | egrep -c "Found [0-9]+ states, explored [0-9]+ transitions"`
+	if [[ "$PERFTEST" == "0" && "$RUNOK" != 1 ]]; then
+		echolog -e "\e[33;1m  > \e[0;1mNeeds rerun: performance test (incomplete)\e[0m";
+		PERFTEST="1"
+	fi
+
+}
+
+function parseDivineResult() {
+	FILETOCHECK="$1";
+	STDERRFILE="$2"
+
+	PERFTEST=0
+
+	if [ ! -e "$FILETOCHECK" ]; then
+		PERFTEST="1"
+		return;
+	fi
+
+	RUNOK=`test -e ${FILETOCHECK} && cat ${FILETOCHECK} | egrep -c "error found"`
+	if [[ "$PERFTEST" == "0" && "$RUNOK" != 1 ]]; then
+		RANATLEASTONEHOUR=`test -e ${STDERRFILE} && cat ${STDERRFILE} | egrep -c "states in 1:00:00, avg"`
+		if [[ "$PERFTEST" == "0" && "$RANATLEASTONEHOUR" != 1 ]]; then
+			echolog -e "\e[33;1m  > \e[0;1mNeeds rerun: performance test (incomplete)\e[0m";
+			PERFTEST="1"
+		else
+			echolog -e "\e[33;1m  > \e[0;1mIgnoring incomplete run of more than an hour\e[0m";
+		fi
+	fi
+
+}
+
+function parseNidhuggResult() {
+	FILETOCHECK="$1";
+
+	PERFTEST=0
+
+	if [ ! -e "${FILETOCHECK}" ]; then
+		PERFTEST="1"
+		return;
+	fi
+
+	RUNOK=`test -e ${FILETOCHECK} && cat ${FILETOCHECK} | egrep -c "Trace count: [0-9]+"`
+	if [[ "$PERFTEST" == "0" && "$RUNOK" != 1 ]]; then
+		echolog -e "\e[33;1m  > \e[0;1mNeeds rerun: performance test (incomplete)\e[0m";
+		PERFTEST="1"
+	fi
+
+}
+
+function all () {
+
+	DEFSCALE=28
+	mkdir -p "${RESULTS_COLLECTION_DIR}/${TEST}"
+	for t in "${ALL_THREADS[@]}"; do
+		for te in "${ALL_TESTS[@]}"; do
+			for i in "${ALL_IMPLS[@]}"; do
+				testImpl ${TEST_DIR}/${te} $i $t ${DEFSCALE}
+			done;
+		done;
+	done;
+	wait;
+}
+
+all

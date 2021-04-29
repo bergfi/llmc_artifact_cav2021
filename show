@@ -1,0 +1,847 @@
+#!/bin/python
+
+import os
+import sys
+import time
+import csv
+#from ggplot import *
+#########from ggplot.geoms import geom_line
+import json
+import re
+import sqlite3
+import pandas
+from collections import namedtuple
+import math
+import numpy
+import yaml
+try:
+    from yaml import CLoader as YAMLLoader, CDumper as YAMLDumper
+except ImportError:
+    from yaml import YAMLLoader, YAMLDumper
+
+script_dir = os.path.dirname(os.path.abspath(__file__))
+
+def uniq(input):
+  output = []
+  for x in input:
+    if x not in output:
+      output.append(x)
+  return output
+
+modelstoinclude = \
+[   "linkedlist.2.8"
+,   "linkedlist.3.6"
+,   "linkedlist.3.9"
+,   "linkedlist.4.8"
+,   "sortedlinkedlist.2.8"
+,   "sortedlinkedlist.3.6"
+,   "sortedlinkedlist.3.9"
+,   "sortedlinkedlist.4.8"
+,   "prefixsum.2.80"
+,   "prefixsum.4.80"
+,   "prefixsum.6.60"
+,   "prefixsum.6.90"
+,   "hashmap.3.9"
+,   "hashmap.4.12"
+,   "hashmap.4.16"
+,   "hashmap.6.12"
+,   "msq.2.2p"
+,   "msq.3.3"
+,   "msq.3.3p"
+,   "msq.3.2p"
+,   "philo.4.2"
+,   "philo.4.4"
+,   "philo.4.8"
+,   "philo.4.12"
+,   "philo.6.8"
+]
+
+# Name, ID, sql type, type, Axis name, Axis type
+rowconfig =\
+[ ["Time", "time", "real", "s", "Time", "s"]
+, ["States", "states", "int", "state", "States", ""]
+, ["Transitions", "transitions", "int", "transitions", "Transitions", ""]
+, ["States/s", "states_per_s", "real", "state/s", "States per second", ""]
+, ["Transitions/s", "transitions_per_s", "real", "transitions/s", "Transitions per second", ""]
+, ["Thread efficiency", "thread_eff", "int", "state", "States", ""]
+, ["Central enqueues", "centralenqueues", "int", "", "States", ""]
+, ["Central dequeues", "centraldequeues", "int", "", "States", ""]
+, ["Inserted vector-data", "inserted_data", "int", "bytes", "Inserted", "B"]
+, ["Used memory", "memory_used", "int", "bytes", "Used memory", "B"]
+, ["Reserved memory", "memory_reserved", "int", "bytes", "Reserved memory", "B"]
+, ["Used B/state", "used_bytes_per_state", "real", "bytes", "Used B/state", "B/state"]
+, ["Reserved B/state", "reserved_bytes_per_state", "real", "bytes", "Reserved B/state", "B/state"]
+, ["Threads", "threads", "int", "", "Threads", ""]
+, ["Storage", "storage", "text", "", "Storage", ""]
+, ["Rootmap scale", "rootmapscale", "int", "", "Rootmap scale", ""]
+, ["Datamap scale", "datamapscale", "int", "", "Rootmap scale", ""]
+, ["Tool", "tool", "text", "", "Tool", ""]
+, ["Model", "model", "text", "", "Model", ""]
+, ["Strategy", "strategy", "text", "", "Strategy", ""]
+, ["Run", "run", "int", "", "Run", ""]
+, ["Wall time", "wall_time", "real", "s", "Time", "s"]
+, ["RSSmax", "rssmax", "int", "bytes", "Used memory", "B"]
+, ["ResultStatus", "resultstatus", "text", "", "", ""] # valid / invalid / crashed / timeout / nooutput
+]
+
+def insertResult(result):
+    assert("resultstatus" in result)
+    assert("threads" in result)
+    for rc in rowconfig:
+        if rc[1] not in result:
+            if rc[2] == "real":
+                result[rc[1]] = math.nan
+            if rc[2] == "int":
+                result[rc[1]] = math.nan
+            if rc[2] == "text":
+                result[rc[1]] = ""
+    try:
+        cur.execute(sql_rowinsert, [result[i[1]] for i in rowconfig])
+    except sqlite3.IntegrityError:
+        print("Integrity error")
+        print(result)
+        pass;
+
+reDMCOutput = []
+reDMCOutput.append(re.compile("going \((?P<threads>.*?)\)..."))
+reDMCOutput.append(re.compile("Stopped after (?P<time>.*?)s"))
+reDMCOutput.append(re.compile("Found (?P<states>.*?) states, explored (?P<transitions>.*?) transitions"))
+reDMCOutput.append(re.compile("States/s: (?P<states_per_s>.*?)$"))
+reDMCOutput.append(re.compile("Transitions/s: (?P<transitions_per_s>.*?)$"))
+reDMCOutput.append(re.compile("Thread efficiency: (?P<thread_eff>.*?)%"))
+reDMCOutput.append(re.compile("Central enqueues: (?P<centralenqueues>.*?) .*"))
+reDMCOutput.append(re.compile("Central dequeues: (?P<centraldequeues>.*?) .*"))
+reDMCOutput.append(re.compile("Storage Stats \((?P<storage>[^\(]*?)\((?P<rootmapscale>[0-9]*?),(?P<datamapscale>[0-9]*?),(?P<submapscale>[0-9]*?)\)\):"))
+reDMCOutput.append(re.compile("Storage Stats \((?P<storage>[^\(]*?)\((?P<rootmapscale>[0-9]*?),(?P<datamapscale>[0-9]*?)\)\):"))
+reDMCOutput.append(re.compile("Storage Stats \((?P<storage>[^\(]*?)\((?P<rootmapscale>[0-9]*?)\)\):"))
+reDMCOutput.append(re.compile("Inserted vector-data in bytes: (?P<inserted_data>.*?)$"))
+reDMCOutput.append(re.compile("Compression ratio \((?P<memory_used>[^ ]*?) used bytes[^\(]*\((?P<used_bytes_per_state>.*?) bytes per state"))
+reDMCOutput.append(re.compile("Compression ratio \((?P<memory_reserved>.*?) reserved bytes.*"))
+
+reDMCOutput.append(re.compile("prom2lts-mc.*Running (?P<strategy>.*?) using (?P<threads>.*?) cores"))
+reDMCOutput.append(re.compile("prom2lts-mc.*Explored (?P<states>[0-9.]*?) states (?P<transitions>[0-9.]*?) transitions.*"))
+reDMCOutput.append(re.compile("prom2lts-mc.*Total exploration time (?P<time>.*?) sec.*"))
+reDMCOutput.append(re.compile("prom2lts-mc.*States per second: (?P<states_per_s>.*?), Transitions per second: (?P<transitions_per_s>.*?)"))
+reDMCOutput.append(re.compile("prom2lts-mc.*Tree memory: (?P<memory_used_mb>.*?)MB, (?P<used_bytes_per_state>.*?) B/state.*"))
+reDMCOutput.append(re.compile("prom2lts-mc.*Error: (?P<error>.*?)$"))
+
+reDMCOutput.append(re.compile("Warning: (?P<error>.*?)$"))
+reDMCOutput.append(re.compile(" *(?P<states>[0-9.e+]*?)[ \t]*states, stored"))
+reDMCOutput.append(re.compile(" *(?P<transitions>[0-9.e+]*?)[ \t]*transitions (= stored+matched)"))
+reDMCOutput.append(re.compile(" *(?P<memory_used_mb>[0-9.e+]*?)[ \t]*actual memory usage for states"))
+reDMCOutput.append(re.compile(" *(?P<memory_used_equivalent_mb>[0-9.e+]*?)[ \t]*equivalent memory usage for states"))
+reDMCOutput.append(re.compile("pan: elapsed time (?P<time>[0-9.e+]*?) seconds"))
+reDMCOutput.append(re.compile("pan: rate (?P<states_per_s>[0-9.e+]*?) states/second"))
+
+reTimeOutput = []
+reTimeOutput.append(re.compile(".*Elapsed \(wall clock\) time \(h:mm:ss or m:ss\): (?P<et_hours>[0-9]*?):?(?P<et_minutes>[0-9]+?):(?P<et_seconds>[0-9.]+?)$"))
+#reTimeOutput.append(re.compile("Elapsed(?P<whatever>.*?)$"))
+reTimeOutput.append(re.compile(".*Maximum resident set size \(kbytes\): (?P<rssmax_kbytes>[0-9]*?)$"))
+
+def parseTimeOutput(outputFile, model):
+    data = {}
+    for line in outputFile:
+        # print("line, ", line)
+        for matcher in reTimeOutput:
+            match = matcher.match(line)
+            # print("Adding, ", match)
+            if match is not None:
+                # print("Adding, ", match.groupdict())
+                data.update(match.groupdict())
+
+    if "et_seconds" not in data:
+        return {}
+    if len(data["et_hours"]) == 0:
+        data["wall_time"] = float(data["et_minutes"]) * 60 + float(data["et_seconds"])
+    else:
+        data["wall_time"] = float(data["et_hours"]) * 3600 + float(data["et_minutes"]) * 60 + float(data["et_seconds"])
+    if "rssmax_kbytes" in data:
+        data["rssmax"] = 1024 * int(data["rssmax_kbytes"])
+    return data
+
+def parseDMCAndLTSminOutput(dmcOutputFile, model):
+    data = {"resultstatus": "valid"}
+    for line in dmcOutputFile:
+        if(line.startswith("assertion")):
+            print(model + ": " + line)
+        for matcher in reDMCOutput:
+            match = matcher.match(line)
+            # print("Adding, ", match)
+            if match is not None:
+                # print("Adding, ", match.groupdict())
+                data.update(match.groupdict())
+    return data
+
+def parseNidhuggOutput(nidhuggOutputFile, model):
+    matcher = re.compile("Trace count: (?P<trace_count>[0-9]+?)$")
+    data = {}
+    for line in nidhuggOutputFile:
+        match = matcher.match(line)
+        if match is not None:
+            data.update(match.groupdict())
+            data["resultstatus"] = "valid"
+    data["states"] = 0
+    if "resultstatus" not in data:
+        data["resultstatus"] = "crashed"
+    return data
+
+def parseDivineOutput(divineOutputFile, model):
+    y = yaml.load(divineOutputFile, Loader=YAMLLoader)
+
+    if y is None:
+        return {"resultstatus": "nooutput"}
+    if "states per second" not in y or "state count" not in y:
+        return {"resultstatus": "nooutput"}
+
+    try:
+        data = {"resultstatus": "nooutput"}
+        data["states_per_s"] = y["states per second"]
+        data["states"] = y["state count"]
+        data["memory_used"] = y["fragment memory"]["total"]["used"] + y["snapshot memory"]["total"]["used"]
+        data["memory_reserved"] = y["fragment memory"]["total"]["held"] + y["snapshot memory"]["total"]["held"]
+        if data["states"] > 0:
+          data["used_bytes_per_state"] = data["memory_used"] / data["states"]
+          data["resultstatus"] = "valid"
+        data["time"] = y["timers"]["search"]
+        return data
+    except:
+        print("DIVINE FORMAT ERROR", y)
+        return {"resultstatus": "noutput"}
+
+def parseDivineStderrOutput(divineStderrOutputFile, model):
+    matcherKilled = re.compile("^.*Command terminated by signal 15*$")
+    matcherTerminated = re.compile("^.*Command terminated by signal.*$")
+    matcherSuccess = re.compile("^.*a report was written to*$")
+    matcherCrashed = re.compile("^.*Incomplete trace! This is a bug.*$")
+    data = {}
+    for line in divineStderrOutputFile:
+        match = matcherSuccess.match(line)
+        if match is not None:
+            data["resultstatus"] = "valid"
+        match = matcherCrashed.match(line)
+        if match is not None:
+            data["resultstatus"] = "crashed"
+    return data
+
+def parseStderrOutput(stderrOutputFile, model):
+    matcherKilled = re.compile("^.*Command terminated by signal 15*$")
+    matcherTerminated = re.compile("^.*Command terminated by signal.*$")
+    data = {}
+    for line in stderrOutputFile:
+        match = matcherKilled.match(line)
+        if match is not None:
+            data["resultstatus"] = "killed"
+        else:
+            match = matcherTerminated.match(line)
+            if match is not None:
+                data["resultstatus"] = "crashed"
+    return data
+
+def parseFiles(results, dir, filenames, cb):
+    r = 0
+    for reportfile in [os.path.join(dir, f) for f in filenames]:
+        if os.path.exists(reportfile):
+            r |= 1
+            if timeDBmodified < os.path.getmtime(reportfile):
+                r |= 2
+            # try:
+            with open(reportfile, errors='ignore') as f:
+                results.update(cb(f, model))
+            # except:
+            #     print("ERROR processing input file ", reportfile)
+    return r
+
+
+sql_rowinsert = "REPLACE INTO results VALUES (" + ("?," * (len(rowconfig)-1)) + "?)"
+
+results_collection_dir=os.path.join(script_dir, "results")
+
+if not os.path.exists(results_collection_dir):
+    os.makedirs(results_collection_dir)
+
+combined_data_file = os.path.join(results_collection_dir, "data.db")
+
+dataIsNew = False
+timeDBmodified = 0
+if not os.path.exists(combined_data_file):
+    dataIsNew = True
+else:
+    timeDBmodified = os.path.getmtime(combined_data_file)
+
+conn = sqlite3.connect(combined_data_file)
+cur = conn.cursor()
+try:
+    cur.execute("SELECT * FROM results;")
+    c = cur.fetchall()
+    if len(c) > 0:
+        if len(c[0]) == len(rowconfig):
+            dfAll = pandas.DataFrame(c, columns=[rc[1] for rc in rowconfig])
+            if dfAll.empty:
+                timeDBmodified = 0
+        else:
+            dataIsNew = True
+            timeDBmodified = 0
+            conn.commit()
+            conn.close()
+            os.remove(combined_data_file)
+            conn = sqlite3.connect(combined_data_file)
+            cur = conn.cursor()
+except sqlite3.OperationalError:
+    dataIsNew = True
+    timeDBmodified = 0
+
+if dataIsNew:
+    print("data is new, creating table")
+    cur.execute('''CREATE TABLE results (''' + ', '.join([r[1] + " " + r[2] for r in rowconfig])
+                + ''', CONSTRAINT uniq UNIQUE (tool, model, storage, threads, rootmapscale, datamapscale, strategy, run)'''
+                + ''');''')
+    # c.execute('''CREATE TABLE results
+    #              ( impl text, threads int, scale int, lf real, attempt int
+    #              , loads int, stores int, llcmisses int
+    #              , local_access int, remote_access int, remote_cache_access int
+    #              , bw_max real, bw_average real
+    #              , bwsingle_max real, bwsingle_average real
+    #              , qpiout_max real, qpiout_average real
+    #              , )''')
+    conn.commit()
+
+reDirName = re.compile("(?P<storage>.*?)_t(?P<threads>.*?)_rm(?P<rootmapscale>.*?)_dm(?P<datamapscale>.*?)_strat(?P<strategy>.*?)_r(?P<run>.*?)$")
+#reFileName = re.compile("st(?P<storage>.*?)_t(?P<threads>.*?)_rm(?P<rootmapscale>.*?)_dm(?P<datamapscale>.*?)_(?P<attempt>.*?)")
+
+noData = 0
+noNewData = 0
+total = 0
+
+hasNewData = {}
+
+for model in os.listdir(results_collection_dir):
+    model_dir = os.path.join(results_collection_dir, model)
+
+    if not os.path.isdir(model_dir):
+        continue
+
+    # print("  Model `" + str(model) + "'")
+    subTotal = 0
+
+    zomg = 0
+    tools = [e for e in os.listdir(model_dir) if os.path.isdir(os.path.join(model_dir, e))]
+    for tool in tools:
+        # print("    Tool `" + str(tool) + "'")
+        tool_dir = os.path.join(model_dir, tool)
+        runs = [e for e in os.listdir(tool_dir) if os.path.isdir(os.path.join(tool_dir, e))]
+
+        for run in runs:
+
+            total = total + 1
+
+            # print("      Run `" + str(run) + "'")
+
+            match = reDirName.match(run)
+            if match is None:
+                noData = noData + 1
+                continue
+            else:
+                results = match.groupdict()
+            results['tool'] = tool
+            if model.endswith(".prom"):
+                results['model'] = model[:-len(".prom")]
+            else:
+                results['model'] = model
+
+
+            # print("      is `" + str(results['storage']) + "'")
+            absdir = os.path.join(tool_dir, run)
+            hasData = False
+            isNew = False
+
+            parseFiles(results, absdir, ['stderr'], parseTimeOutput)
+
+            if tool == "llmc":
+                r = parseFiles(results, absdir, ['stdout', 'stderr'], parseDMCAndLTSminOutput)
+                r |= parseFiles(results, absdir, ['stderr'], parseStderrOutput)
+                if "states" not in results:
+                    results["resultstatus"] = "invalid"
+                if r & 1:
+                    hasData = True
+                if r & 2:
+                    isNew = True
+                # for reportfile in [os.path.join(absdir, 'stdout'), os.path.join(absdir, 'stderr')]:
+                #     if os.path.exists(reportfile):
+                #         hasData = True
+                #         if timeDBmodified < os.path.getmtime(reportfile):
+                #             isNew = True
+                #         with open(reportfile) as f:
+                #             # print(reportfile)
+                #             results.update(parseTimeOutput(f, model))
+                #             results.update(parseDMCAndLTSminOutput(f, model))
+            elif tool == "divine":
+                r = parseFiles(results, absdir, ['test.report', 'test.processed.report'], parseDivineOutput)
+                r |= parseFiles(results, absdir, ['stderr'], parseDivineStderrOutput)
+                r |= parseFiles(results, absdir, ['stderr'], parseStderrOutput)
+                if r & 1:
+                    hasData = True
+                if r & 2:
+                    isNew = True
+                # reportfile = os.path.join(absdir, "test.report")
+                # if os.path.exists(reportfile):
+                #     hasData = True
+                #     if timeDBmodified < os.path.getmtime(reportfile):
+                #         isNew = True
+                #     with open(reportfile) as f:
+                #         # print(reportfile)
+                #         results.update(parseDivineOutput(f, model))
+            elif tool == "nidhugg":
+                r = parseFiles(results, absdir, ['stdout'], parseNidhuggOutput)
+                r |= parseFiles(results, absdir, ['stderr'], parseStderrOutput)
+                if r & 1:
+                    hasData = True
+                if r & 2:
+                    isNew = True
+                # for reportfile in [os.path.join(absdir, 'stdout'), os.path.join(absdir, 'stderr')]:
+                #     if os.path.exists(reportfile):
+                #         hasData = True
+                #         if timeDBmodified < os.path.getmtime(reportfile):
+                #             isNew = True
+                #         with open(reportfile) as f:
+                #             # print(reportfile)
+                #             results.update(parseTimeOutput(f, model))
+                #             results.update(parseNidhuggOutput(f, model))
+            else:
+                exit(-1)
+
+            if "error" in results:
+                print("SKIPPING ERROR: ", results['error'])
+                continue
+
+            if not "resultstatus" in results:
+                print("No result status", results)
+                continue
+
+            if 'memory_used' not in results:
+                if 'memory_used_mb' in results:
+                    results['memory_used'] = float(results['memory_used_mb']) * 1024 * 1024
+                elif 'memory_used_equivalent_mb' in results:
+                    results['memory_used'] = float(results['memory_used_equivalent_mb']) * 1024 * 1024
+                # else:
+                #     print("SKIPPING: no memory_used: ", results)
+                #     continue
+
+            if 'used_bytes_per_state' not in results:
+                if 'memory_used' in results:
+                    if 'states' in results and int(results['states']) != 0:
+                        results['used_bytes_per_state'] = float(results['memory_used']) / float(results['states'])
+                # else:
+                #     print("memory_used not in results: ", results)
+                #     quit()
+
+            if results["storage"] == "cleary-tree":
+                results["storage"] = "cleary_tree"
+
+#            if results['storage'] == "collapse":
+#                print(results)
+            # if tool == "ltsmin":
+            #     zomg = zomg + 1
+            #     if zomg == 13:
+            #         quit()
+            if not hasData:
+                noData = noData + 1
+                continue
+
+            if not isNew:
+                noNewData = noNewData + 1
+                continue
+
+            # print(results)
+            hasNewData[results['tool'] + "_" + results['storage']] = True
+            insertResult(results)
+
+newDataAdded = len(hasNewData)
+
+#print("New data:    ", newDataAdded)
+#print("No data:     ", noData)
+#print("No new data: ", noNewData)
+#print("Unknown:     ", total - newDataAdded - noData - noNewData)
+#print("Total:       ", total)
+
+cur.execute("SELECT * FROM results;")
+c = cur.fetchall()
+dfAll = pandas.DataFrame(c, columns=[rc[1] for rc in rowconfig])
+conn.commit()
+conn.close()
+
+def getData(dfAgg, tool_select = [], rootmapscale = [], threads = [], model='hashmap'):
+
+    if not isinstance(tool_select, list):
+        storage = [tool_select]
+    if not isinstance(rootmapscale, list):
+        rootmapscale = [rootmapscale]
+    if not isinstance(model, list):
+        model = [model]
+    if not isinstance(threads, list):
+        threads = [threads]
+
+    a = dfAgg
+    if len(tool_select) > 0:
+        a = a.query(' or '.join(['tool_select==\'' + i + '\'' for i in tool_select]))
+    if len(rootmapscale) > 0:
+        a = a.query(' or '.join(['rootmapscale == ' + str(s) for s in rootmapscale]))
+    if len(model) > 0:
+        a = a.query(' or '.join(['model == \'' + str(t) + '\'' for t in model]))
+    if len(threads) > 0:
+        a = a.query(' or '.join(['threads == ' + str(t) for t in threads]))
+
+    return a
+
+def printDataprintData(dfAgg, tool_select = [], rootmapscale = [], threads = [], model = []):
+    a = getData(dfAgg, tool_select, rootmapscale, threads, model)
+    print(a)
+
+if os.path.exists(combined_data_file):
+  timeDBmodified = os.path.getmtime(combined_data_file)
+
+def printLatexTable(filename, dfAgg):
+    cols = ['States', 'MiB']
+
+    # models=uniq(dfAgg["model"].values)
+    # models.sort()
+    models = modelstoinclude
+    tools=uniq(dfAgg["tool"].values)
+    storages=uniq(dfAgg["storage"].values)
+    toolstorages=uniq(dfAgg["tool_select"].values)
+    threads=sorted(uniq(dfAgg["threads"].values))
+
+    statespacetools = [e for e in tools if e != "nidhugg"]
+    nrstatespacetools = len(tools)-1
+
+    # threadsA = threads[:len(threads)//2]
+    # threadsB = threads[len(threads)//2:]
+    threadsA = threads #[1, 8, 16, 96, 192]
+    threadsB = []
+
+    statespacetools = []
+
+    with open(filename, "w+") as f:
+
+        f.write("\\begin{tabular}{")
+        f.write("|l")
+        if len(statespacetools) > 0:
+            f.write("||" + "r" * (len(cols) * len(statespacetools)))
+            f.write("||" + "r" * (len(threadsA) * len(tools)))
+        else:
+            f.write(("||" + "r" * len(threadsA)) * len(tools))
+        f.write("|}\n")
+
+        f.write("\\rowcolor{{darkgray}}\\multicolumn{{1}}{{c||}}{{\headcell{{Model}}}}\n".format())
+        if len(statespacetools) > 0:
+            f.write("& \\multicolumn{{{}}}{{c||}}{{\headcell{{State space}}}}\n".format(len(cols)*len(statespacetools)))
+        f.write("& \\multicolumn{{{}}}{{c|}}{{\headcell{{Execution Time (s) by number of threads}}}}\n".format(len(threadsA)*len(tools)))
+        f.write("\\\\\n\n")
+
+        f.write("\\rowcolor{darkgray}\n")
+        if len(statespacetools) > 0:
+            for tool in statespacetools[:-1]:
+                f.write("& \\multicolumn{{{}}}{{c}}{{\headcell{{\\{}}}}}\n".format(len(cols), tool.upper()))
+            f.write("& \\multicolumn{{{}}}{{c||}}{{\headcell{{\\{}}}}}\n".format(len(cols), statespacetools[-1].upper()))
+            for tool in tools[:-1]:
+                f.write("& \\multicolumn{{{}}}{{c}}{{\headcell{{\\{}}}}}\n".format(len(threadsA), tool.upper()))
+        else:
+            for tool in tools[:-1]:
+                f.write("& \\multicolumn{{{}}}{{c||}}{{\headcell{{\\{}}}}}\n".format(len(threadsA), tool.upper()))
+        f.write("& \\multicolumn{{{}}}{{c|}}{{\headcell{{\\{}}}}}\n".format(len(threadsA), tools[-1].upper()))
+        f.write("\\\\\n\n")
+
+        f.write("\\rowcolor{darkgray}\n")
+        for tool in statespacetools:
+            for c in cols:
+                f.write("& \headcell{{{}}}\n".format(c))
+        for tool in tools:
+            for t in threadsA:
+                f.write("& \headcell{{{}}}\n".format(t))
+        f.write("\\\\\n\n")
+
+        if len(threadsB) > 0:
+            f.write("\\rowcolor{darkgray}\n")
+            f.write("&\n" * (len(statespacetools) * len(cols)))
+            for tool in tools:
+                for t in threadsB:
+                    f.write("& \headcell{{{}}}\n".format(t))
+            f.write("\\\\\n\n")
+
+        for model in models:
+            a = dfAgg.query("model == '{}'".format(model))
+            f.write("{}\n".format(model))
+            for tool in statespacetools:
+                b = a.query("tool == '{}'".format(tool))
+                states_min = b['states'].min()
+                states_max = b['states'].max()
+                if math.isnan(states_min):
+                    f.write("& -\n")
+                else:
+                    f.write("& ")
+                    if states_max != states_min:
+                        f.write("$\sim$")
+                    f.write("{}\n".format(states_min))
+
+                mused_min = b['memory_used'].min()
+                mused_max = b['memory_used'].max()
+                if math.isnan(mused_min):
+                    f.write("& -\n")
+                else:
+                    f.write("& ")
+                    if mused_min != mused_max:
+                        f.write("$\sim$")
+                    f.write("{:.1f}\n".format(mused_min/1024/1024))
+
+            for tool in tools:
+                c = a.query("tool == '{}'".format(tool))
+                states_min = c['states'].min()
+                states_max = c['states'].max()
+                for t in threadsA:
+                    b = a.query("tool == '{}' and threads == {}".format(tool, t))
+                    bestLine = None
+                    for index, line in b.iterrows():
+                        if bestLine is None:
+                            bestLine = line
+                        elif bestLine["resultstatus"] != "valid":
+                            bestLine = line
+                        elif line["resultstatus"] == "valid":
+                            if bestLine is not None:
+                                if line['wall_time'] < bestLine['wall_time']:
+                                    bestLine = line
+                    if bestLine is not None:
+                        if bestLine["resultstatus"] == "valid":
+                            if not math.isnan(bestLine['wall_time']):
+                                v = bestLine['wall_time']
+                                if v < 1:
+                                    f.write("& $<$1")
+                                elif states_min != states_max:
+                                    f.write("& \\resultstatesdiffer{{{:.0f}}}".format(v))
+                                else:
+                                    f.write("& {:.0f}".format(v))
+                            else:
+                                f.write("& -")
+                        elif bestLine["resultstatus"] == "crashed":
+                            f.write("& \\resultcrash{}")
+                        elif bestLine["resultstatus"] == "nooutput":
+                            f.write("& \\resultnooutput{}")
+                        else:
+                            time = bestLine["wall_time"]
+                            if not math.isnan(time):
+                                time_minutes = time // 60
+                                time_hours = time_minutes // 60 % 12
+                                time_halfdays = time_minutes // 60 // 12
+                                f.write("& \\resulttimeout{{{:d}}}{{{:d}}}{{{:d}}}".format(int(time_halfdays), int(time_hours), int(time_minutes % 60)))
+                            else:
+                                f.write("& \\resulttimeout{0}{0}{0}")
+                        f.write("%")
+                        for d in ["tool_select_model", "threads", "rootmapscale", "datamapscale"]:
+                            if d in bestLine:
+                                f.write(" {}:{}".format(d, bestLine[d]))
+                    else:
+                        f.write("&")
+                    f.write("\n")
+
+
+
+            f.write("\\\\\n\n")
+
+            if len(threadsB) > 0:
+                f.write("&\n" * (len(statespacetools) * len(cols)))
+                for tool in tools:
+                    for t in threadsB:
+                        b = a.query("tool == '{}' and threads == {}".format(tool, t))
+                        if len(b['wall_time'].values) > 0:
+                            if not math.isnan(b['wall_time'].values[0]):
+                                f.write("& {:.1f}\n".format(b['wall_time'].values[0]))
+                            else:
+                                f.write("& -\n")
+                        else:
+                            f.write("&\n")
+
+                f.write("\\\\\n\n")
+
+        f.write("\\end{tabular}")
+
+def printASCIITables(dfAgg, var):
+    cols = ['States', 'MiB']
+
+    # models=uniq(dfAgg["model"].values)
+    # models.sort()
+    models = modelstoinclude
+    tools=uniq(dfAgg["tool"].values)
+    storages=uniq(dfAgg["storage"].values)
+    toolstorages=uniq(dfAgg["tool_select"].values)
+    threads=sorted(uniq(dfAgg["threads"].values))
+
+    statespacetools = [e for e in tools if e != "nidhugg"]
+    nrstatespacetools = len(tools)-1
+
+    # threadsA = threads[:len(threads)//2]
+    # threadsB = threads[len(threads)//2:]
+    threadsA = threads #[1, 8, 16, 96, 192]
+    threadsB = []
+
+    statespacetools = []
+
+    f = sys.stdout
+
+    width_model = 24
+    width_tool = 10
+    fmt_data = ">10"
+    v_crashed = ""
+    v_nooutput = ""
+    v_other = ""
+    v_nan = ""
+    v_noresult = ""
+
+    f.write("\033[1m== Comparing {} on {}\n".format(", ".join(tools), var))
+    f.write("{:<{width}}".format("Model", width = width_model))
+
+    for tool in tools:
+        f.write("{:>{width}}".format(tool, width = width_tool))
+    f.write("\033[0m")
+
+    for model in models:
+        a = dfAgg.query("model == '{}'".format(model))
+        f.write("\n{:<{width}}".format(model, width = width_model))
+        for tool in tools:
+            c = a.query("tool == '{}'".format(tool))
+            states_min = c['states'].min()
+            states_max = c['states'].max()
+            bestLine = None
+            for index, line in c.iterrows():
+                if bestLine is None:
+                    bestLine = line
+                elif bestLine["resultstatus"] != "valid":
+                    bestLine = line
+                elif line["resultstatus"] == "valid":
+                    if bestLine is not None:
+                        if line[var] < bestLine[var]:
+                            bestLine = line
+            if bestLine is not None:
+                if bestLine["resultstatus"] == "valid":
+                    if not math.isnan(bestLine[var]):
+                        v = bestLine[var]
+                        if v < 1:
+                            f.write("{:{fmt}}".format("<1", fmt=fmt_data))
+                        elif states_min != states_max:
+                            f.write("{:{fmt}}".format("{:.0f}".format(v), fmt=fmt_data))
+                        else:
+                            f.write("{:{fmt}}".format("{:.0f}".format(v), fmt=fmt_data))
+                    else:
+                        f.write("{:{fmt}}".format(v_nan, fmt=fmt_data))
+                elif bestLine["resultstatus"] == "crashed":
+                    f.write("{:{fmt}}".format(v_crashed, fmt=fmt_data))
+                elif bestLine["resultstatus"] == "nooutput":
+                    f.write("{:{fmt}}".format(v_nooutput, fmt=fmt_data))
+                else:
+                    f.write("{:{fmt}}".format(v_other, fmt=fmt_data))
+            else:
+                f.write("{:{fmt}}".format(v_noresult, fmt=fmt_data))
+    f.write("\n")
+
+total_time = dfAll['time'].sum()
+
+if dfAll.empty:
+    print("No data")
+    exit(0)
+
+#dfDBSLLFix = dfAll.query('impl == \'dbsll\' and lf >= 1')
+#dfDBSLLAvg = dfDBSLLFix.groupby(['test', 'impl', 'threads', 'lf', 'scale', 'dr', 'cr', 'attempt']).mean().reset_index()
+#print(dfDBSLLAvg)
+
+pandas.set_option('display.max_columns', 20)
+pandas.set_option('display.max_colwidth', 400)
+pandas.set_option('display.max_rows', 400)
+pandas.set_option('display.width', 400)
+
+dfAgg = dfAll.query("resultstatus == 'valid'")
+dfAgg = dfAgg.groupby(['tool', 'storage', 'model', 'threads', 'rootmapscale', 'strategy']).min(True).reset_index()
+dfAll['tool_select'] = dfAll.apply(lambda x: x['tool'] + "_" + x['storage'] + "_" + x['strategy'], axis=1)
+dfAll['tool_select_model'] = dfAll.apply(lambda x: x['tool'] + "_" + x['storage'] + "_" + x['strategy'] + "_" + x['model'], axis=1)
+dfAgg['tool_select'] = dfAgg.apply(lambda x: x['tool'] + "_" + x['storage'] + "_" + x['strategy'], axis=1)
+dfAgg['tool_select_model'] = dfAgg.apply(lambda x: x['tool'] + "_" + x['storage'] + "_" + x['strategy'] + "_" + x['model'], axis=1)
+
+# We cannot use 0, the test should have been more precise
+#dfAgg["time_verify"] = dfAgg["time_verify"].replace(0.0, 0.03)
+#for index, row in dfAgg.iterrows():
+#  if row["time_verify"] == 0.0 and row["lf"] == 0.01:
+#      print(getData(dfAgg, row["impl"], row["scale"], 0.1, row["dr"], row["cr"], row["threads"], row["test"])["time_verify"])
+#      row["time_verify"] = getData(dfAgg, row["impl"], row["scale"], 0.1, row["dr"], row["cr"], row["threads"], row["test"]) / 10;
+
+#printData(dfAgg, "michaelML", 28, 0.01, 0, 1, 96, 'k');
+#exit(0);
+
+#dfAgg = dfAgg.query("threads != 64 and threads != 32 and threads != 80")
+dfAgg = dfAgg.query("wall_time > 0.0")
+
+models=uniq(dfAgg["model"].values)
+tools=uniq(dfAgg["tool"].values)
+storages=uniq(dfAgg["storage"].values)
+toolstorages=uniq(dfAgg["tool_select"].values)
+
+ignoreThreads = dfAgg.groupby(['tool', 'storage', 'model', 'strategy', 'rootmapscale'])
+ignoreThreadsMin = ignoreThreads.min().reset_index()
+ignoreThreadsMin['threads'] = ignoreThreadsMin.apply(lambda x: 1, axis=1)
+ignoreThreadsMax = ignoreThreads.max().reset_index()
+ignoreThreadsMax['threads'] = ignoreThreadsMax.apply(lambda x: 1, axis=1)
+
+ignoreThreadsMinNoNaN = ignoreThreadsMin.query("states > 0 and time > 0")
+ignoreThreadsMinNoNaN = ignoreThreadsMinNoNaN.query("model != 'msq.3.2p' and model != 'msq.3p'  and model != 'msq.3.3p' and model != 'hashmap.4.16' and model != 'hashmap.6.12' and model != 'philo.6.8'")
+ignoreThreadsMaxNoNaN = ignoreThreadsMax.query("states > 0 and time > 0")
+ignoreThreadsMaxNoNaN = ignoreThreadsMaxNoNaN.query("model != 'msq.3.2p' and model != 'msq.3p'  and model != 'msq.3.3p' and model != 'hashmap.4.16' and model != 'hashmap.6.12' and model != 'philo.6.8'")
+
+sss_divine = ignoreThreadsMinNoNaN.query("tool == 'divine'")
+sss_llmc = ignoreThreadsMinNoNaN.query("tool == 'llmc'")
+sss2_divine = ignoreThreadsMaxNoNaN.query("tool == 'divine'")
+sss2_llmc = ignoreThreadsMaxNoNaN.query("tool == 'llmc'")
+
+models_divine_llmc = set(uniq(sss_divine["model"].values)).intersection(set(uniq(sss_llmc["model"].values)))
+sss_divine = sss_divine.query(' or '.join(['model == \'' + str(t) + '\'' for t in models_divine_llmc]))
+sss_llmc = sss_llmc.query(' or '.join(['model == \'' + str(t) + '\'' for t in models_divine_llmc]))
+
+print("\033[1m== Comparing LLMC and DIVINE on the tests they both completed\033[0m")
+
+print("divine time (s) ({:>2}):             {:>20.2f}".format(sss_divine['time'].count(), sss_divine['time'].sum()))
+print("llmc   time (s) ({:>2}):             {:>20.2f}".format(sss_llmc['time'].count(), sss_llmc['time'].sum()))
+
+print("divine states ({:>2}):               {:>20.2f}".format(sss_divine['states'].count(), sss_divine['states'].sum()))
+print("llmc   states ({:>2}):               {:>20.2f}".format(sss_llmc['states'].count(), sss_llmc['states'].sum()))
+
+print("divine used_bytes_per_state ({:>2}): {:>20.2f}".format(sss_divine['used_bytes_per_state'].count(), sss_divine['used_bytes_per_state'].mean()))
+print("llmc   used_bytes_per_state ({:>2}): {:>20.2f}".format(sss_llmc['used_bytes_per_state'].count(), sss_llmc['used_bytes_per_state'].mean()))
+
+print("divine memory_used (B) (sum) ({:>2}):{:>20.2f}".format(sss_divine['memory_used'].count(), sss_divine['memory_used'].sum()))
+print("llmc   memory_used (B) (sum) ({:>2}):{:>20.2f}".format(sss_llmc['memory_used'].count(), sss_llmc['memory_used'].sum()))
+
+print("divine memory_used (B) (max) ({:>2}):{:>20.2f}".format(sss_divine['memory_used'].count(), sss_divine['memory_used'].max()))
+print("llmc   memory_used (B) (max) ({:>2}):{:>20.2f}".format(sss_llmc['memory_used'].count(), sss_llmc['memory_used'].max()))
+
+print("divine average states/s:          {:>20.2f}".format(ignoreThreadsMax.query("tool == 'divine'")['states_per_s'].mean()))
+print("llmc   average states/s:          {:>20.2f}".format(ignoreThreadsMax.query("tool == 'llmc'")['states_per_s'].mean()))
+
+print("\033[1m== Comparing LLMC and Nidhugg on the tests they both completed\033[0m")
+
+ignoreThreadsMinNoNaN2 = ignoreThreadsMin.query("wall_time > 0")
+ignoreThreadsMinNoNaN2 = ignoreThreadsMinNoNaN2.query("model != 'msq.2.2p' and model != 'msq.3p' and model != 'msq.3.3' and model != 'msq.3.2p' and model != 'msq.3.3p' and model != 'hashmap.3.9' and model != 'hashmap.4.12' and model != 'hashmap.4.16' and model != 'hashmap.6.12' and model != 'philo.4.4' and model != 'philo.4.8' and model != 'philo.4.12' and model != 'philo.6.8'")
+
+wt_nidhugg = ignoreThreadsMinNoNaN2.query("tool == 'nidhugg'")
+wt_llmc = ignoreThreadsMinNoNaN2.query("tool == 'llmc'")
+
+models_nidhugg_llmc = set(uniq(wt_nidhugg["model"].values)).intersection(set(uniq(wt_llmc["model"].values)))
+wt_nidhugg = wt_nidhugg.query(' or '.join(['model == \'' + str(t) + '\'' for t in models_nidhugg_llmc]))
+wt_llmc = wt_llmc.query(' or '.join(['model == \'' + str(t) + '\'' for t in models_nidhugg_llmc]))
+
+print("nidhugg wall_time (s) ({:>2}):       {:>20.2f}".format(wt_nidhugg['wall_time'].count(), wt_nidhugg['wall_time'].sum()))
+print("llmc    wall_time (s) ({:>2}):       {:>20.2f}".format(wt_llmc['wall_time'].count(), wt_llmc['wall_time'].sum()))
+
+print("----------------------")
+
+total_time = dfAll['wall_time'].sum()
+print("total time (seconds):", total_time)
+print("total time (hours):", total_time/60/60)
+print("total time (days):", total_time/60/60/24)
+
+printASCIITables(dfAll.query("tool == 'llmc' or tool == 'divine'"), "time")
+printASCIITables(dfAll, "wall_time")
+
