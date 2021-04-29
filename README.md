@@ -19,7 +19,7 @@ This repository contains all scripts and files related to the LLMC Artifact for 
 
 On Arch Linux this would be:
 ```
-git clone https://github.com/bergfi/llmc ~/artifact
+git clone https://github.com/bergfi/llmc_artifact_cav2021 ~/artifact
 pacman -S cmake llvm git darcs boost python libffi clang gtest graphviz time figlet python-pip python-yaml
 pip install pandas
 pip install sqlite3
