@@ -49,3 +49,20 @@ A short summary of the command line interface to LLMC:
 - `--ll2dmc.assume_nonatomic_collapsable=B`, B=1 enables the assumption that non-atomic memory operations are thread-local (see above)
 
 For a more detailed description on how to execute LLMC, we refer to its [README.md](https://github.com/bergfi/llmc).
+
+## License
+
+LLMC CAV2021 Artifact - Scripts to evaluate LLMC, DIVINE and Nidhugg
+Copyright © 2021 Freark van der Berg
+
+LLMC CAV2021 Artifact is free software: you can redistribute it and/or modify
+it under the terms of the GNU General Public License as published by
+the Free Software Foundation, version 3 of the License.
+
+LLMC CAV2021 Artifact is distributed in the hope that it will be useful,
+but WITHOUT ANY WARRANTY; without even the implied warranty of
+MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+GNU General Public License for more details.
+
+You should have received a copy of the GNU General Public License
+along with LLMC CAV2021 Artifact.  If not, see <https://www.gnu.org/licenses/>.
