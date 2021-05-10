@@ -55,9 +55,6 @@ if [ ! -e ${DIR_NIDHUGG}/build/Makefile ]; then
 fi
 make -j 4
 
-# divine comes pre-compiled because it takes 3 hours to compile
-exit
-
 # Compile Divine
 echo -e "\e[1;34m:: \e[0;1mCompiling \e[22mDIVINE\e[0m"
 cd "${DIR_DIVINE}"
