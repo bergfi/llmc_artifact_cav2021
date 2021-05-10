@@ -13,24 +13,26 @@ This repository contains all scripts and files related to the LLMC Artifact for 
 - graphviz
 - time
 - figlet
+- ninja
 - python-pip
 - python-yaml
-- python packages: pandas, sqlite3
+- python packages: pandas
 
 On Arch Linux this would be:
 ```
-git clone https://github.com/bergfi/llmc_artifact_cav2021 ~/artifact
-pacman -S cmake llvm git darcs boost python libffi clang gtest graphviz time figlet python-pip python-yaml
+pacman -S base base-devel clang cmake llvm git darcs boost python libffi clang gtest graphviz time figlet ninja python-pip python-yaml
 pip install pandas
-pip install sqlite3
+git clone https://github.com/bergfi/llmc_artifact_cav2021.git $HOME/artifact
 ```
+
+Optionally add `$HOME/artifact` to `PATH` to be able to call the included commands from anywhere
 
 ## Included commands
 
 - `help`: print a short help page on how to invoke various commands to evaluate the artifact
 - `run`: execute various tests. By default, runs a quick test suite that takes 2-4 hours.
 - `show`: print all results so far
-- `prepare`: compile binaries from source. Not needed, as binaries are included.
+- `prepare`: download and compile binaries from source.
 
 ## Run the artifact on cases outside the artifact
 
@@ -46,4 +48,4 @@ A short summary of the command line interface to LLMC:
 - `--storage.hashmap_scale=N`, meaning the underlying hash map of any storage container will have 2^N elements
 - `--ll2dmc.assume_nonatomic_collapsable=B`, B=1 enables the assumption that non-atomic memory operations are thread-local (see above)
 
-For a more detailed description on how to execute LLMC, we refer to its [README.md](https://github.com/bergfi/llmc)
+For a more detailed description on how to execute LLMC, we refer to its [README.md](https://github.com/bergfi/llmc).
