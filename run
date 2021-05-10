@@ -269,7 +269,6 @@ function testImpl() {
 
 	done;
 
-	echo "zomg ${TESTDIR}/test.cpp"
 	if [ -e "$TESTDIR/test.cpp" ]; then
 		FILETOMC="$TESTDIR/test.cpp"
 		ISCPP=1
