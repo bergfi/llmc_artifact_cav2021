@@ -2,6 +2,7 @@
 
 This repository contains all scripts and files related to the LLMC Artifact for CAV2021. To recreate the artifact, it is enough to clone this repository to `$HOME/artifact` and install the requirements:
 - cmake 3.19
+- gcc 9, 10 or 11
 - llvm 11
 - git
 - darcs
@@ -18,21 +19,25 @@ This repository contains all scripts and files related to the LLMC Artifact for 
 - python-yaml
 - python packages: pandas
 
-On Arch Linux this would be:
+On Arch Linux (the artifact uses the Arch Installer of 2021-04-01) this would be:
 ```
 pacman -S base base-devel clang cmake llvm git darcs boost python libffi clang gtest graphviz time figlet ninja python-pip python-yaml
 pip install pandas
 git clone https://github.com/bergfi/llmc_artifact_cav2021.git $HOME/artifact
 ```
 
-Optionally add `$HOME/artifact` to `PATH` to be able to call the included commands from anywhere
+Optionally add `$HOME/artifact` to `PATH` to be able to call the included commands from anywhere.
 
 ## Included commands
+
+At this point, the included commands can be called:
 
 - `help`: print a short help page on how to invoke various commands to evaluate the artifact
 - `run`: execute various tests. By default, runs a quick test suite that takes 2-4 hours.
 - `show`: print all results so far
-- `prepare`: download and compile binaries from source.
+- `prepare`: download and compile binaries for LLMC, DIVINE and Nidhugg from source.
+
+Start by downloading and compiling LLMC, DIVINE and Nidhugg by running `prepare`. Then, the test suite can be executed using `run`; for help regarding this, run `help`. After the test suite has completed, the results can be shown using `show`.
 
 ## Run the artifact on cases outside the artifact
 
