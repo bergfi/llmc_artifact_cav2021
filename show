@@ -810,29 +810,32 @@ sss_llmc = ignoreThreadsMinNoNaN.query("tool == 'llmc'")
 sss2_divine = ignoreThreadsMaxNoNaN.query("tool == 'divine'")
 sss2_llmc = ignoreThreadsMaxNoNaN.query("tool == 'llmc'")
 
-models_divine_llmc = set(uniq(sss_divine["model"].values)).intersection(set(uniq(sss_llmc["model"].values)))
-sss_divine = sss_divine.query(' or '.join(['model == \'' + str(t) + '\'' for t in models_divine_llmc]))
-sss_llmc = sss_llmc.query(' or '.join(['model == \'' + str(t) + '\'' for t in models_divine_llmc]))
-
 print("\033[1m== Comparing LLMC and DIVINE on the tests they both completed\033[0m")
 
-print("divine time (s) ({:>2}):             {:>20.2f}".format(sss_divine['time'].count(), sss_divine['time'].sum()))
-print("llmc   time (s) ({:>2}):             {:>20.2f}".format(sss_llmc['time'].count(), sss_llmc['time'].sum()))
+models_divine_llmc = set(uniq(sss_divine["model"].values)).intersection(set(uniq(sss_llmc["model"].values)))
+if len(models_divine_llmc) == 0:
+    print("There are no common completed models.")
+else:
+    sss_divine = sss_divine.query(' or '.join(['model == \'' + str(t) + '\'' for t in models_divine_llmc]))
+    sss_llmc = sss_llmc.query(' or '.join(['model == \'' + str(t) + '\'' for t in models_divine_llmc]))
 
-print("divine states ({:>2}):               {:>20.2f}".format(sss_divine['states'].count(), sss_divine['states'].sum()))
-print("llmc   states ({:>2}):               {:>20.2f}".format(sss_llmc['states'].count(), sss_llmc['states'].sum()))
+    print("divine time (s) ({:>2}):             {:>20.2f}".format(sss_divine['time'].count(), sss_divine['time'].sum()))
+    print("llmc   time (s) ({:>2}):             {:>20.2f}".format(sss_llmc['time'].count(), sss_llmc['time'].sum()))
 
-print("divine used_bytes_per_state ({:>2}): {:>20.2f}".format(sss_divine['used_bytes_per_state'].count(), sss_divine['used_bytes_per_state'].mean()))
-print("llmc   used_bytes_per_state ({:>2}): {:>20.2f}".format(sss_llmc['used_bytes_per_state'].count(), sss_llmc['used_bytes_per_state'].mean()))
+    print("divine states ({:>2}):               {:>20.2f}".format(sss_divine['states'].count(), sss_divine['states'].sum()))
+    print("llmc   states ({:>2}):               {:>20.2f}".format(sss_llmc['states'].count(), sss_llmc['states'].sum()))
 
-print("divine memory_used (B) (sum) ({:>2}):{:>20.2f}".format(sss_divine['memory_used'].count(), sss_divine['memory_used'].sum()))
-print("llmc   memory_used (B) (sum) ({:>2}):{:>20.2f}".format(sss_llmc['memory_used'].count(), sss_llmc['memory_used'].sum()))
+    print("divine used_bytes_per_state ({:>2}): {:>20.2f}".format(sss_divine['used_bytes_per_state'].count(), sss_divine['used_bytes_per_state'].mean()))
+    print("llmc   used_bytes_per_state ({:>2}): {:>20.2f}".format(sss_llmc['used_bytes_per_state'].count(), sss_llmc['used_bytes_per_state'].mean()))
 
-print("divine memory_used (B) (max) ({:>2}):{:>20.2f}".format(sss_divine['memory_used'].count(), sss_divine['memory_used'].max()))
-print("llmc   memory_used (B) (max) ({:>2}):{:>20.2f}".format(sss_llmc['memory_used'].count(), sss_llmc['memory_used'].max()))
+    print("divine memory_used (B) (sum) ({:>2}):{:>20.2f}".format(sss_divine['memory_used'].count(), sss_divine['memory_used'].sum()))
+    print("llmc   memory_used (B) (sum) ({:>2}):{:>20.2f}".format(sss_llmc['memory_used'].count(), sss_llmc['memory_used'].sum()))
 
-print("divine average states/s:          {:>20.2f}".format(ignoreThreadsMax.query("tool == 'divine'")['states_per_s'].mean()))
-print("llmc   average states/s:          {:>20.2f}".format(ignoreThreadsMax.query("tool == 'llmc'")['states_per_s'].mean()))
+    print("divine memory_used (B) (max) ({:>2}):{:>20.2f}".format(sss_divine['memory_used'].count(), sss_divine['memory_used'].max()))
+    print("llmc   memory_used (B) (max) ({:>2}):{:>20.2f}".format(sss_llmc['memory_used'].count(), sss_llmc['memory_used'].max()))
+
+    print("divine average states/s:          {:>20.2f}".format(ignoreThreadsMax.query("tool == 'divine'")['states_per_s'].mean()))
+    print("llmc   average states/s:          {:>20.2f}".format(ignoreThreadsMax.query("tool == 'llmc'")['states_per_s'].mean()))
 
 print("\033[1m== Comparing LLMC and Nidhugg on the tests they both completed\033[0m")
 
@@ -843,11 +846,14 @@ wt_nidhugg = ignoreThreadsMinNoNaN2.query("tool == 'nidhugg'")
 wt_llmc = ignoreThreadsMinNoNaN2.query("tool == 'llmc'")
 
 models_nidhugg_llmc = set(uniq(wt_nidhugg["model"].values)).intersection(set(uniq(wt_llmc["model"].values)))
-wt_nidhugg = wt_nidhugg.query(' or '.join(['model == \'' + str(t) + '\'' for t in models_nidhugg_llmc]))
-wt_llmc = wt_llmc.query(' or '.join(['model == \'' + str(t) + '\'' for t in models_nidhugg_llmc]))
+if len(models_nidhugg_llmc) == 0:
+    print("There are no common completed models.")
+else:
+    wt_nidhugg = wt_nidhugg.query(' or '.join(['model == \'' + str(t) + '\'' for t in models_nidhugg_llmc]))
+    wt_llmc = wt_llmc.query(' or '.join(['model == \'' + str(t) + '\'' for t in models_nidhugg_llmc]))
 
-print("nidhugg wall_time (s) ({:>2}):       {:>20.2f}".format(wt_nidhugg['wall_time'].count(), wt_nidhugg['wall_time'].sum()))
-print("llmc    wall_time (s) ({:>2}):       {:>20.2f}".format(wt_llmc['wall_time'].count(), wt_llmc['wall_time'].sum()))
+    print("nidhugg wall_time (s) ({:>2}):       {:>20.2f}".format(wt_nidhugg['wall_time'].count(), wt_nidhugg['wall_time'].sum()))
+    print("llmc    wall_time (s) ({:>2}):       {:>20.2f}".format(wt_llmc['wall_time'].count(), wt_llmc['wall_time'].sum()))
 
 print("----------------------")
 
@@ -858,4 +864,3 @@ print("total time (days):", total_time/60/60/24)
 
 printASCIITables(dfAll.query("tool == 'llmc' or tool == 'divine'"), "time")
 printASCIITables(dfAll, "wall_time")
-

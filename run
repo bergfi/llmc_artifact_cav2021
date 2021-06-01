@@ -1,4 +1,4 @@
-#/bin/bash
+#!/bin/bash
 # LLMC CAV2021 Artifact - Scripts to evaluate LLMC, DIVINE and Nidhugg
 # Copyright © 2021 Freark van der Berg
 #
